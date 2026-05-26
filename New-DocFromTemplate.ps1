@@ -348,7 +348,9 @@ try {
                     $current = $story
                     while ($null -ne $current) {
 
-                        foreach ($placeholder in $replacements.Keys) {
+                        # Process longer placeholders first so #replace1 doesn't
+                        # eat the prefix of #replace10/11/... (substring match).
+                        foreach ($placeholder in ($replacements.Keys | Sort-Object -Property Length -Descending)) {
 
                             # Word's Find.Replacement.Text is capped at 255
                             # characters; longer values throw "String parameter
