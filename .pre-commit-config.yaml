@@ -12,3 +12,5 @@ repos:
       - id: check-merge-conflict
       - id: end-of-file-fixer
       - id: trailing-whitespace
+      - id: no-commit-to-branch
+        args: ['--branch', 'main']
