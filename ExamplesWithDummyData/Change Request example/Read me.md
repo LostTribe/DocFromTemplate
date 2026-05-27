@@ -70,12 +70,13 @@ Process more than one (but not all):
         -Worksheet    'Infrastructure','Applications'
 
 
-Send output somewhere else:
+Send output somewhere else (omit -OutputDir to use the default
+"output\" folder beside the template):
 
     .\New-DocFromTemplate.ps1 `
         -ExcelPath    ".\ExamplesWithDummyData\Change Request example\data.xlsx" `
         -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx" `
-        -OutputDir    'C:\Temp\change-requests'
+        -OutputDir    .\out
 
 
 Requirements
