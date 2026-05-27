@@ -64,12 +64,13 @@ Only process one team:
         -Worksheet    'engineering'
 
 
-Send output somewhere else:
+Send output somewhere else (omit -OutputDir to use the default
+"output\" folder beside the template):
 
     .\New-DocFromTemplate.ps1 `
         -ExcelPath    ".\ExamplesWithDummyData\New Joiner example\data.xlsx" `
         -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx" `
-        -OutputDir    'C:\Temp\welcomes'
+        -OutputDir    .\out
 
 
 Requirements
