@@ -1,0 +1,21 @@
+; First row of Change Request data.xlsx, in key=value form.
+; CR-2026-0142 - Datacentre Core Switch Firmware Upgrade.
+; Comments use ';' because '#' is reserved for placeholder names.
+; (The 'title' column from the xlsx is omitted - in key=value mode
+;  the output filename comes from -OutputName, not a title field.)
+
+#Replace1=CR-2026-0142
+#Replace2=2026-05-26
+#Replace3=A. Doe, Network Engineering Lead
+#Replace4=Infrastructure, Network Engineering
+#Replace5=P3 - Standard
+#Replace6=Hardware - Firmware Upgrade
+#Replace7=Upgrade datacentre core switch firmware to the latest supported release
+#Replace8=Current firmware approaches end-of-support (2026-09-30). The new release contains critical bug fixes affecting routing convergence and resolves a known core-fabric issue that has driven two P1 incidents in the past quarter. Upgrade is required before EOS to retain vendor support.
+#Replace9=Phased upgrade across both core switches during scheduled maintenance windows. Primary core switch on 2026-06-07 02:00-04:00. Secondary core switch on 2026-06-14 02:00-04:00. In-service upgrade mechanism used to minimise traffic impact. Pre-checks include configuration backup, control-plane validation, and a tabletop walkthrough with vendor technical support on standby.
+#Replace10=Medium. Transient traffic loss expected during supervisor failover (<200 ms). Brief routing reconvergence may impact long-lived TCP sessions. Pre-change vendor support ticket opened. Rollback supported via dual-image boot configuration.
+#Replace11=APPROVED - Network Operations Manager, IT Operations Director. CAB review 2026-05-30.
+#Replace12=2026-06-07 02:00-04:00 BST and 2026-06-14 02:00-04:00 BST
+#Replace13=Approved - Scheduled
+#Replace14=Boot to previous image via the documented 'boot system' rollback configuration; estimated rollback time 8 minutes. If routing fails to converge within 5 minutes, escalate to the vendor and revert via console.
+#Replace15=Network Operations team, Storage team (downstream SAN traffic), Application Ops on-call, vendor technical support
