@@ -497,6 +497,29 @@ switch ($PSCmdlet.ParameterSetName) {
     }
 
     'FromCsv' {
+        # Pre-validate the header row before handing the file to Import-Csv.
+        # Import-Csv refuses duplicate column headers with the cryptic error
+        # "The member 'X' is already present", which fires before our own
+        # error handling runs. Detect the problem here so the user sees a
+        # message that names the duplicate and points at the file.
+        #
+        # Two common shapes hit the duplicate check:
+        #   * A real repeated header ('name,name,#role')
+        #   * Trailing commas creating multiple empty-string headers
+        #     ('title,#a,#b,,') - the user usually doesn't realise their
+        #     CSV ends with stray columns
+        $headerLine = Get-Content -LiteralPath $CsvPath -TotalCount 1
+        if (-not $headerLine) { throw "CSV is empty: $CsvPath" }
+        $headers = $headerLine -split ',' | ForEach-Object { $_.Trim().Trim('"') }
+        $dupes = $headers | Group-Object | Where-Object Count -gt 1
+        if ($dupes) {
+            $detail = foreach ($d in $dupes) {
+                if ($d.Name) { "'$($d.Name)' (x$($d.Count))" }
+                else         { "$($d.Count) empty header(s) - usually trailing commas" }
+            }
+            throw "CSV has duplicate column header(s): $($detail -join ', '). Each placeholder name must be unique. File: $CsvPath"
+        }
+
         $dataSheets = @( [pscustomobject]@{
             Name = [IO.Path]::GetFileNameWithoutExtension($CsvPath)
             Rows = @(Import-Csv -LiteralPath $CsvPath)
