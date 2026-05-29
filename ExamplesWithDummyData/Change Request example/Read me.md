@@ -3,12 +3,18 @@ Change Request example - dummy data for New-DocFromTemplate.ps1
 
 What's in this folder
 ---------------------
-  data.xlsx          Three worksheets of realistic IT Change Requests:
-                       Infrastructure  - networking, storage, DR
-                       Applications    - SaaS, integration, collaboration
-                       Security        - emergency patching, policy, PKI
+  data.csv           Twelve realistic IT Change Requests in flat CSV
+                     form. Header row defines the placeholders; each
+                     data row produces one filled .docx.
 
-                     Shared headers across every sheet:
+                     Names are stock placeholders (A. Doe / B. Smith
+                     etc.) and vendor / product references are
+                     genericised ("datacentre core switch", "CRM
+                     platform major release") so the data is
+                     obviously fake.
+
+                     Shared headers (legend for the numbered
+                     placeholders):
                        title       -> output filename (NOT a placeholder)
                        #Replace1   -> CR Reference
                        #Replace2   -> Date submitted
@@ -26,17 +32,13 @@ What's in this folder
                        #Replace14  -> Backout / rollback plan
                        #Replace15  -> Stakeholders / affected parties
 
-  data.csv           Same twelve CRs as data.xlsx, flattened into one CSV
-                     (no worksheet concept). Use this if you don't want
-                     the ImportExcel module dependency.
-
-  data.json          Same twelve CRs as data.xlsx, as a JSON array of
-                     objects. Property names match the column headers
-                     above.
+  data.json          Same twelve CRs as a JSON array of objects.
+                     Property names match the column headers above.
+                     Each object becomes one filled .docx.
 
   data.txt           Key=value format, ONE record only - CR-2026-0142
-                     (the Core Switch Firmware Upgrade, first row of
-                     Infrastructure). Demonstrates the single-document
+                     (the Core Switch Firmware Upgrade, first record
+                     of data.csv). Demonstrates the single-document
                      input mode. Comments use ';' because '#' is
                      reserved for placeholder names.
 
@@ -53,32 +55,25 @@ What's in this folder
 How to run
 ----------
 Open PowerShell at the repository root (..\..). Pick the input format
-that matches where your data lives - all four produce filled .docx
+that matches where your data lives - all three produce filled .docx
 files in this folder's "output" subdirectory.
 
 
-From the Excel workbook (requires the ImportExcel module):
-
-    .\New-DocFromTemplate.ps1 `
-        -ExcelPath    ".\ExamplesWithDummyData\Change Request example\data.xlsx" `
-        -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx"
-
-
-From the CSV (no module required, built-in PowerShell):
+From the CSV:
 
     .\New-DocFromTemplate.ps1 `
         -CsvPath      ".\ExamplesWithDummyData\Change Request example\data.csv" `
         -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx"
 
 
-From the JSON array (no module required):
+From the JSON array:
 
     .\New-DocFromTemplate.ps1 `
         -JsonPath     ".\ExamplesWithDummyData\Change Request example\data.json" `
         -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx"
 
 
-From the key=value text file (single document, no module required):
+From the key=value text file (single document):
 
     .\New-DocFromTemplate.ps1 `
         -KeyValuePath ".\ExamplesWithDummyData\Change Request example\data.txt" `
@@ -86,7 +81,7 @@ From the key=value text file (single document, no module required):
         -OutputName   'CR-2026-0142-Core-Switch-Firmware-Upgrade'
 
 
-The first three produce twelve files - one CR per row - named after
+CSV and JSON each produce twelve files - one CR per row - named after
 each row's "title" column, e.g.:
 
     CR-2026-0142-Core-Switch-Firmware-Upgrade.docx
@@ -96,22 +91,6 @@ each row's "title" column, e.g.:
 
 The key=value run produces only the one CR (data.txt holds CR-2026-0142
 only).
-
-
-Only process one category (Excel only - CSV and JSON are flat):
-
-    .\New-DocFromTemplate.ps1 `
-        -ExcelPath    ".\ExamplesWithDummyData\Change Request example\data.xlsx" `
-        -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx" `
-        -Worksheet    'Security'
-
-
-Process more than one category (but not all):
-
-    .\New-DocFromTemplate.ps1 `
-        -ExcelPath    ".\ExamplesWithDummyData\Change Request example\data.xlsx" `
-        -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx" `
-        -Worksheet    'Infrastructure','Applications'
 
 
 Send output somewhere else (omit -OutputDir to use the default
@@ -127,9 +106,8 @@ Requirements
 ------------
   * Windows with Microsoft Word installed (Word COM automation is used)
   * PowerShell 5.1 or 7+
-  * The ImportExcel module - ONLY for the Excel mode (-ExcelPath).
-    CSV, JSON, and key=value modes use built-in PowerShell:
-        Install-Module ImportExcel -Scope CurrentUser
+
+  No external modules. Every mode uses built-in PowerShell.
 
 
 Notes
@@ -139,5 +117,5 @@ Notes
     headers, footers, footnotes), so the CR reference appears on every
     page of the rendered document automatically.
   * The template is opened read-only and is never modified.
-  * Replacement is case-sensitive: the workbook headers use #Replace1
+  * Replacement is case-sensitive: the data headers use #Replace1
     (capital R) on purpose - the template uses the same casing.

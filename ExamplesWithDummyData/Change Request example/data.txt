@@ -1,7 +1,7 @@
-; First row of Change Request data.xlsx, in key=value form.
+; First record of Change Request data.csv, in key=value form.
 ; CR-2026-0142 - Datacentre Core Switch Firmware Upgrade.
 ; Comments use ';' because '#' is reserved for placeholder names.
-; (The 'title' column from the xlsx is omitted - in key=value mode
+; (The 'title' column from data.csv is omitted - in key=value mode
 ;  the output filename comes from -OutputName, not a title field.)
 
 #Replace1=CR-2026-0142

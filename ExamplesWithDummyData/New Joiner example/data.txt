@@ -1,5 +1,5 @@
 ; New Joiner example - key=value format
-; One file = one document. Same data as row 1 of data.xlsx (Jane Doe).
+; One file = one document. Same data as row 1 of data.csv (Jane Doe).
 ;
 ; Rules:
 ;   - blank lines and lines starting with ';' are skipped
