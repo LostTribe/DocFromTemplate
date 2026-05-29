@@ -1,19 +1,14 @@
 <#
 .SYNOPSIS
     Fills a Word .docx template by replacing placeholder strings. Values can
-    come from an Excel workbook, a CSV file, a JSON file, a key=value text
-    file, or a hashtable supplied directly.
+    come from a CSV file, a JSON file, a key=value text file, or a hashtable
+    supplied directly. No external module dependencies - everything uses
+    built-in PowerShell.
 
 .DESCRIPTION
-    Five parameter sets:
+    Four parameter sets:
 
-    FromExcel (default)
-        For every worksheet in -ExcelPath the script reads each data row,
-        opens the template, then performs a case-sensitive find & replace
-        for each column header found in the row. Produces one document
-        per row. Requires the ImportExcel module.
-
-    FromCsv
+    FromCsv (default)
         Reads -CsvPath via Import-Csv. Each column header is a placeholder,
         each row produces one document. Flat: no worksheets concept. No
         external module dependency.
@@ -37,13 +32,12 @@
         once and writes a single document. Useful for one-off renders that
         do not warrant a file.
 
-    Naming rules (tabular sources: FromExcel, FromCsv, FromJson-array):
+    Naming rules (tabular sources: FromCsv, FromJson-array):
       * If a row has a 'title' column (case-insensitive) its value is the
         output filename.
-      * Otherwise a single-row sheet produces <sheet>.docx, and a multi-row
-        sheet produces <sheet>_1.docx, <sheet>_2.docx, ... ('sheet' is the
-        worksheet name in FromExcel, the file basename in FromCsv and
-        FromJson.)
+      * Otherwise a single-row source produces <source>.docx, and a
+        multi-row source produces <source>_1.docx, <source>_2.docx, ...
+        ('source' is the CSV or JSON file basename.)
       * Duplicates within a run get a numeric suffix to disambiguate.
 
     Naming rules (single-doc sources: FromValues, FromJson-object,
@@ -70,9 +64,6 @@
         synthesised from the values and $SheetName is '(values)', '(json)',
         or '(keyvalue)' respectively.
 
-.PARAMETER ExcelPath
-    Path to the source .xlsx workbook. Required in FromExcel mode.
-
 .PARAMETER CsvPath
     Path to the source .csv file. Required in FromCsv mode.
 
@@ -92,18 +83,10 @@
     Folder to write filled documents into. Defaults to an 'output' folder
     next to the template. Created if it does not exist.
 
-.PARAMETER Worksheet
-    FromExcel only. Optional list of worksheet names. Defaults to every
-    sheet in the workbook.
-
 .PARAMETER OutputName
     FromValues, FromJson, FromKeyValue. Output filename without extension.
     Ignored if the JSON file parses to an array (filenames come from each
     row's 'title' column or the fallback rule instead).
-
-.EXAMPLE
-    .\New-DocFromTemplate.ps1 -ExcelPath .\data.xlsx `
-                              -TemplatePath .\template.docx
 
 .EXAMPLE
     .\New-DocFromTemplate.ps1 -CsvPath .\rows.csv `
@@ -125,11 +108,8 @@
                               -OutputName 'Jane-welcome'
 #>
 
-[CmdletBinding(DefaultParameterSetName = 'FromExcel')]
+[CmdletBinding(DefaultParameterSetName = 'FromCsv')]
 param(
-    [Parameter(Mandatory, ParameterSetName = 'FromExcel')]    [string]    $ExcelPath,
-    [Parameter(ParameterSetName = 'FromExcel')]               [string[]]  $Worksheet,
-
     [Parameter(Mandatory, ParameterSetName = 'FromCsv')]      [string]    $CsvPath,
 
     [Parameter(Mandatory, ParameterSetName = 'FromJson')]     [string]    $JsonPath,
@@ -168,8 +148,10 @@ $ErrorActionPreference = 'Stop'
         row whose pre-processed value is $null.
 
     Parameters:
-      $Row       -- the original PSCustomObject from Import-Excel
-      $SheetName -- the worksheet the row came from
+      $Row       -- the original PSCustomObject from the source
+      $SheetName -- a tag identifying the source (CSV/JSON file basename
+                    in tabular mode; '(values)' / '(json)' / '(keyvalue)'
+                    in single-doc modes)
 
     Return:
       A PSCustomObject (the row to use going forward) or $null to skip.
@@ -267,13 +249,6 @@ function Invoke-DocPostProcess {
 if (-not (Test-Path $TemplatePath)) { throw "Template not found: $TemplatePath" }
 
 switch ($PSCmdlet.ParameterSetName) {
-    'FromExcel' {
-        if (-not (Test-Path $ExcelPath)) { throw "Excel file not found: $ExcelPath" }
-        if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
-            throw "ImportExcel module not installed. Run: Install-Module ImportExcel -Scope CurrentUser"
-        }
-        Import-Module ImportExcel
-    }
     'FromCsv'      { if (-not (Test-Path $CsvPath))      { throw "CSV file not found: $CsvPath" } }
     'FromJson'     { if (-not (Test-Path $JsonPath))     { throw "JSON file not found: $JsonPath" } }
     'FromKeyValue' { if (-not (Test-Path $KeyValuePath)) { throw "Key=value file not found: $KeyValuePath" } }
@@ -284,7 +259,6 @@ switch ($PSCmdlet.ParameterSetName) {
 # fully qualified paths up front.
 $TemplatePath = (Resolve-Path $TemplatePath).Path
 switch ($PSCmdlet.ParameterSetName) {
-    'FromExcel'    { $ExcelPath    = (Resolve-Path $ExcelPath   ).Path }
     'FromCsv'      { $CsvPath      = (Resolve-Path $CsvPath     ).Path }
     'FromJson'     { $JsonPath     = (Resolve-Path $JsonPath    ).Path }
     'FromKeyValue' { $KeyValuePath = (Resolve-Path $KeyValuePath).Path }
@@ -375,7 +349,7 @@ $wdFormatDocumentDefault = 16   # Modern .docx (OOXML)
 
     Opens the template read-only, runs every (placeholder, value) pair
     across all story ranges, calls Invoke-DocPostProcess, then saves to
-    $OutPath. Shared by both the FromExcel and FromValues paths so the
+    $OutPath. Shared across every parameter set (tabular and single-doc) so the
     replacement logic lives in exactly one place.
 
     Parameters:
@@ -466,7 +440,7 @@ function Save-FilledDocument {
 # Each input source is normalised into one of two shapes:
 #
 #   $dataSheets       -- @( @{ Name='...'; Rows=@(<PSCustomObject>, ...) }, ... )
-#                        used by the tabular path (FromExcel, FromCsv,
+#                        used by the tabular path (FromCsv,
 #                        FromJson when the file is an array).
 #
 #   $singleValues +   -- hashtable + base filename (no extension) + a tag
@@ -482,20 +456,6 @@ $singleOutputName = $null
 $singleSheetTag   = $null
 
 switch ($PSCmdlet.ParameterSetName) {
-    'FromExcel' {
-        $sheets = Get-ExcelSheetInfo -Path $ExcelPath | Select-Object -ExpandProperty Name
-        if ($Worksheet) {
-            $sheets = $sheets | Where-Object { $Worksheet -contains $_ }
-        }
-        if (-not $sheets) { throw "No matching worksheets found." }
-        $dataSheets = foreach ($sheet in $sheets) {
-            [pscustomobject]@{
-                Name = $sheet
-                Rows = @(Import-Excel -Path $ExcelPath -WorksheetName $sheet)
-            }
-        }
-    }
-
     'FromCsv' {
         # Pre-validate the header row before handing the file to Import-Csv.
         # Import-Csv refuses duplicate column headers with the cryptic error
@@ -633,7 +593,7 @@ try {
     else {
 
         # Tabular path: one document per row across every sheet bundle
-        # (FromExcel, FromCsv, FromJson when the file is an array).
+        # (FromCsv, FromJson when the file is an array).
         foreach ($sheetBundle in $dataSheets) {
             $sheet = $sheetBundle.Name
             $rows  = @($sheetBundle.Rows)

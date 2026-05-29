@@ -1,47 +1,37 @@
 # DocFromTemplate
 
-DocFromTemplate is a PowerShell tool that fills a Word `.docx` template by replacing placeholder strings. Values can come from rows in an Excel workbook (one document per row) or be supplied directly via a hashtable (one document — handy for calling from other scripts).
+DocFromTemplate is a PowerShell tool that fills a Word `.docx` template by replacing placeholder strings. Values can come from a CSV file, a JSON file, a key=value text file, or be supplied directly via a hashtable.
 
-For each row in each worksheet, every placeholder in the template (e.g. `#replace1`, `#replace2`) is replaced with the value from the column whose header matches the placeholder text exactly. One filled `.docx` is produced per row.
-
-Native support for CSV, JSON, txt, key=value, and direct-`-Values` modes — they all can be used with PowerShell.
+For each record in the source, every placeholder in the template (e.g. `#replace1`, `#replace2`) is replaced with the matching value. Tabular sources (CSV, JSON arrays) produce one document per row; single-record sources (JSON object, key=value, `-Values` hashtable) produce one document per call.
 
 ## Requirements
 
 - Windows with Microsoft Word installed (Word COM automation is used)
 - PowerShell 5.1 or 7+
 
-### Optional: Excel mode
-
-Only if you want to use `-ExcelPath`, install the [`ImportExcel`](https://www.powershellgallery.com/packages/ImportExcel) module:
-
-```powershell
-Install-Module ImportExcel -Scope CurrentUser
-```
-
-The script imports it lazily — it's loaded only when `-ExcelPath` is supplied, so a clone that never touches Excel mode will never see a "module not installed" error.
+That's it. No external modules, no `Install-Module` step — every mode uses built-in PowerShell.
 
 ## Quick start
 
 Two ready-to-run examples live under `ExamplesWithDummyData\`. Each folder
-contains a workbook (`data.xlsx`), a Word template, and a `Read me.md`
-with full usage notes. Run the new-joiner example (HR welcome letter for
-new employees):
+contains CSV / JSON / key=value variants of the same data plus a Word
+template and a `Read me.md`. Run the new-joiner example (HR welcome
+letter for new employees) from any source:
 
 ```powershell
 .\New-DocFromTemplate.ps1 `
-    -ExcelPath    ".\ExamplesWithDummyData\New Joiner example\data.xlsx" `
+    -CsvPath      ".\ExamplesWithDummyData\New Joiner example\data.csv" `
     -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
 ```
 
 Outputs land in `.\ExamplesWithDummyData\New Joiner example\output\`.
 
-For a richer, formatted Change Request template (three sheets of realistic
-IT changes):
+For a richer, formatted Change Request template (twelve realistic IT
+changes):
 
 ```powershell
 .\New-DocFromTemplate.ps1 `
-    -ExcelPath    ".\ExamplesWithDummyData\Change Request example\data.xlsx" `
+    -CsvPath      ".\ExamplesWithDummyData\Change Request example\data.csv" `
     -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx"
 ```
 
@@ -49,12 +39,11 @@ See [`ExamplesWithDummyData/New Joiner example/Read me.md`](ExamplesWithDummyDat
 
 ## Usage
 
-The script has five parameter sets covering tabular and single-document sources. Use whichever fits your data:
+The script has four parameter sets covering tabular and single-document sources. Use whichever fits your data:
 
 | Source | Parameter set | Shape | One doc or many? |
 |---|---|---|---|
-| Excel workbook | `FromExcel` (default) | `-ExcelPath` | one per row, all worksheets |
-| CSV file | `FromCsv` | `-CsvPath` | one per row, flat file (no sheets) |
+| CSV file | `FromCsv` (default) | `-CsvPath` | one per row, flat file |
 | JSON file (array) | `FromJson` | `-JsonPath` | one per array element |
 | JSON file (object) | `FromJson` | `-JsonPath` | single document |
 | Key=value text file | `FromKeyValue` | `-KeyValuePath` | single document |
@@ -67,11 +56,6 @@ All the examples below run against the bundled New Joiner data — copy, paste, 
 ### Tabular modes (one document per row)
 
 ```powershell
-# Excel — worksheets become groups; ImportExcel module required
-.\New-DocFromTemplate.ps1 `
-    -ExcelPath    ".\ExamplesWithDummyData\New Joiner example\data.xlsx" `
-    -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
-
 # CSV — flat, header row defines placeholders
 .\New-DocFromTemplate.ps1 `
     -CsvPath      ".\ExamplesWithDummyData\New Joiner example\data.csv" `
@@ -83,16 +67,14 @@ All the examples below run against the bundled New Joiner data — copy, paste, 
     -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
 ```
 
-All three produce the same trio of files (`Jane Doe - Welcome.docx`, `John Smith - Welcome.docx`, `Alex Roe - Welcome.docx`) in the example's `output\` folder.
+Both produce the same trio of files (`Jane Doe - Welcome.docx`, `John Smith - Welcome.docx`, `Alex Roe - Welcome.docx`) in the example's `output\` folder.
 
-In every tabular mode, a column / property called `title` (case-insensitive) is used as the output filename. Without one, files are named after the source (sheet name / CSV file / JSON file) with a numeric suffix per row.
-
-The Excel data has two worksheets (`engineering`, `sales`); use `-Worksheet 'sales'` to process only one.
+In every tabular mode, a column / property called `title` (case-insensitive) is used as the output filename. Without one, files are named after the source file (basename) with a numeric suffix per row.
 
 ### Single-document modes
 
 ```powershell
-# Key=value text — one file -> one document. Bundled file has Jane Doe (xlsx row 1).
+# Key=value text — one file -> one document. Bundled file has Jane Doe.
 .\New-DocFromTemplate.ps1 `
     -KeyValuePath ".\ExamplesWithDummyData\New Joiner example\data.txt" `
     -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx" `
@@ -196,8 +178,8 @@ Get-ADUser -Filter 'Department -eq "Sales"' -Properties EmailAddress, Title |
 ## How it works
 
 - Column headers / object property names / hashtable keys are used as placeholder text **verbatim** — so `#replace1` replaces every occurrence of the literal string `#replace1` in the document. Choose any naming convention you like; the leading `#` is just a convention to make placeholders unlikely to collide with normal prose.
-- In tabular modes (Excel, CSV, JSON array), a `title` column (case-insensitive) is treated specially: its value is used as the output filename instead of being a placeholder. Invalid filename characters are stripped.
-- Tabular filename fallback (no `title` column): a single-row source produces `<sheet>.docx`; a multi-row source produces `<sheet>_1.docx`, `<sheet>_2.docx`, etc. ("sheet" = worksheet name in Excel, file basename in CSV/JSON.)
+- In tabular modes (CSV, JSON array), a `title` column (case-insensitive) is treated specially: its value is used as the output filename instead of being a placeholder. Invalid filename characters are stripped.
+- Tabular filename fallback (no `title` column): a single-row source produces `<source>.docx`; a multi-row source produces `<source>_1.docx`, `<source>_2.docx`, etc. (`<source>` = the CSV or JSON file basename.)
 - Single-document filename: `-OutputName` if provided, otherwise `<source-base>-filled.docx`.
 - The template file is opened read-only and never modified.
 - Replacement runs across all story ranges (body, headers, footers, footnotes).
