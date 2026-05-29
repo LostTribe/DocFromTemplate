@@ -4,12 +4,12 @@ DocFromTemplate is a PowerShell tool that fills a Word `.docx` template by repla
 
 For each row in each worksheet, every placeholder in the template (e.g. `#replace1`, `#replace2`) is replaced with the value from the column whose header matches the placeholder text exactly. One filled `.docx` is produced per row.
 
+Native support for CSV, JSON, txt, key=value, and direct-`-Values` modes — they all can be used with PowerShell.
+
 ## Requirements
 
 - Windows with Microsoft Word installed (Word COM automation is used)
 - PowerShell 5.1 or 7+
-
-That's it for CSV, JSON, key=value, and direct-`-Values` modes — they all use built-in PowerShell.
 
 ### Optional: Excel mode
 
@@ -62,32 +62,63 @@ The script has five parameter sets covering tabular and single-document sources.
 
 `-TemplatePath` and `-OutputDir` are shared across all modes. `-OutputDir` defaults to an `output\` folder beside the template.
 
+All the examples below run against the bundled New Joiner data — copy, paste, and they work. Substitute your own paths once you've seen them produce output.
+
 ### Tabular modes (one document per row)
 
 ```powershell
 # Excel — worksheets become groups; ImportExcel module required
-.\New-DocFromTemplate.ps1 -ExcelPath .\data.xlsx -TemplatePath .\template.docx [-Worksheet 'sheet1','sheet2']
+.\New-DocFromTemplate.ps1 `
+    -ExcelPath    ".\ExamplesWithDummyData\New Joiner example\data.xlsx" `
+    -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
 
 # CSV — flat, header row defines placeholders
-.\New-DocFromTemplate.ps1 -CsvPath .\data.csv -TemplatePath .\template.docx
+.\New-DocFromTemplate.ps1 `
+    -CsvPath      ".\ExamplesWithDummyData\New Joiner example\data.csv" `
+    -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
 
 # JSON array — each element is a row
-.\New-DocFromTemplate.ps1 -JsonPath .\rows.json -TemplatePath .\template.docx
+.\New-DocFromTemplate.ps1 `
+    -JsonPath     ".\ExamplesWithDummyData\New Joiner example\data.json" `
+    -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
 ```
 
+All three produce the same trio of files (`Jane Doe - Welcome.docx`, `John Smith - Welcome.docx`, `Alex Roe - Welcome.docx`) in the example's `output\` folder.
+
 In every tabular mode, a column / property called `title` (case-insensitive) is used as the output filename. Without one, files are named after the source (sheet name / CSV file / JSON file) with a numeric suffix per row.
+
+The Excel data has two worksheets (`engineering`, `sales`); use `-Worksheet 'sales'` to process only one.
 
 ### Single-document modes
 
 ```powershell
-# Hashtable in memory — the original direct mode
-.\New-DocFromTemplate.ps1 -TemplatePath .\letter.docx -Values @{ '#name'='Jane'; '#role'='Engineer' } [-OutputName 'Jane']
+# Key=value text — one file -> one document. Bundled file has Jane Doe (xlsx row 1).
+.\New-DocFromTemplate.ps1 `
+    -KeyValuePath ".\ExamplesWithDummyData\New Joiner example\data.txt" `
+    -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx" `
+    -OutputName   'Jane Doe - Welcome (from txt)'
 
-# JSON object — one object → one document
-.\New-DocFromTemplate.ps1 -JsonPath .\one-record.json -TemplatePath .\letter.docx [-OutputName 'jane']
+# Hashtable in memory — the original direct mode, no file required
+.\New-DocFromTemplate.ps1 `
+    -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx" `
+    -Values @{
+        '#replace1'  = 'Riley Doe'
+        '#replace2'  = 'Designer'
+        '#replace3'  = '2026-09-01'
+        '#replace4'  = 'Design'
+        '#replace5'  = 'Pat Lead'
+        '#replace6'  = 'pat.lead@acmecorp.com'
+        '#replace7'  = 'EMP-2026-9001'
+        '#replace8'  = 'London HQ, Floor 2, Desk D-04'
+        '#replace9'  = 'Chris People'
+        '#replace10' = 'chris.people@acmecorp.com'
+    } `
+    -OutputName 'Riley Doe - Welcome (from values)'
 
-# Key=value text (.env style) — one file → one document
-.\New-DocFromTemplate.ps1 -KeyValuePath .\data.env -TemplatePath .\letter.docx [-OutputName 'jane']
+# JSON object — same shape as a single JSON record on disk
+# (No bundled single-object example; the bundled data.json is an array.
+#  To try this mode, save one of the array elements as its own .json
+#  file and point -JsonPath at it.)
 ```
 
 `-OutputName` is optional. Defaults: `<template-base>-filled` (FromValues), `<json-base>-filled` (FromJson object), `<kv-base>-filled` (FromKeyValue).
