@@ -9,7 +9,7 @@ For each row in each worksheet, every placeholder in the template (e.g. `#replac
 - Windows with Microsoft Word installed (Word COM automation is used)
 - PowerShell 5.1 or 7+
 - [`ImportExcel`](https://www.powershellgallery.com/packages/ImportExcel) module: `Install-Module ImportExcel -Scope CurrentUser`
-  - Only needed for the Excel mode. The direct `-Values` mode does not require it.
+  - **Only needed for Excel mode** (`-ExcelPath`). CSV, JSON, key=value, and direct-`-Values` modes all use built-in PowerShell — no external module required. The script imports `ImportExcel` lazily, *only* when `-ExcelPath` is supplied, so a clone that never touches Excel mode will never see a "module not installed" error.
 
 ## Quick start
 
@@ -39,34 +39,53 @@ See [`ExamplesWithDummyData/New Joiner example/Read me.md`](ExamplesWithDummyDat
 
 ## Usage
 
-The script has two parameter sets. Use whichever fits.
+The script has five parameter sets covering tabular and single-document sources. Use whichever fits your data:
 
-### Excel mode (one document per row)
+| Source | Parameter set | Shape | One doc or many? |
+|---|---|---|---|
+| Excel workbook | `FromExcel` (default) | `-ExcelPath` | one per row, all worksheets |
+| CSV file | `FromCsv` | `-CsvPath` | one per row, flat file (no sheets) |
+| JSON file (array) | `FromJson` | `-JsonPath` | one per array element |
+| JSON file (object) | `FromJson` | `-JsonPath` | single document |
+| Key=value text file | `FromKeyValue` | `-KeyValuePath` | single document |
+| Hashtable in memory | `FromValues` | `-Values` | single document |
 
-```powershell
-.\New-DocFromTemplate.ps1 `
-    -ExcelPath    <path-to.xlsx> `
-    -TemplatePath <path-to-template.docx> `
-    [-OutputDir   <output-folder>] `
-    [-Worksheet   <name1>,<name2>]
-```
+`-TemplatePath` and `-OutputDir` are shared across all modes. `-OutputDir` defaults to an `output\` folder beside the template.
 
-- `-OutputDir` defaults to an `output\` folder beside the template.
-- `-Worksheet` filters which sheets to process; default is all sheets.
-
-### Direct values mode (single document, no workbook)
+### Tabular modes (one document per row)
 
 ```powershell
-.\New-DocFromTemplate.ps1 `
-    -TemplatePath <path-to-template.docx> `
-    -Values       <hashtable> `
-    [-OutputName  <filename-without-extension>] `
-    [-OutputDir   <output-folder>]
+# Excel — worksheets become groups; ImportExcel module required
+.\New-DocFromTemplate.ps1 -ExcelPath .\data.xlsx -TemplatePath .\template.docx [-Worksheet 'sheet1','sheet2']
+
+# CSV — flat, header row defines placeholders
+.\New-DocFromTemplate.ps1 -CsvPath .\data.csv -TemplatePath .\template.docx
+
+# JSON array — each element is a row
+.\New-DocFromTemplate.ps1 -JsonPath .\rows.json -TemplatePath .\template.docx
 ```
 
-- `-Values` is a hashtable of `placeholder => value` pairs. **Keys starting with `#` must be quoted** (`'#name' = ...`); unquoted `#name` is a PowerShell comment.
-- `-OutputName` defaults to `<template-base>-filled`.
-- Row-level customisation hooks (`Invoke-RowPreProcess`, `Get-CustomOutputFileName`) do not fire in this mode. `Invoke-DocPostProcess` still does.
+In every tabular mode, a column / property called `title` (case-insensitive) is used as the output filename. Without one, files are named after the source (sheet name / CSV file / JSON file) with a numeric suffix per row.
+
+### Single-document modes
+
+```powershell
+# Hashtable in memory — the original direct mode
+.\New-DocFromTemplate.ps1 -TemplatePath .\letter.docx -Values @{ '#name'='Jane'; '#role'='Engineer' } [-OutputName 'Jane']
+
+# JSON object — one object → one document
+.\New-DocFromTemplate.ps1 -JsonPath .\one-record.json -TemplatePath .\letter.docx [-OutputName 'jane']
+
+# Key=value text (.env style) — one file → one document
+.\New-DocFromTemplate.ps1 -KeyValuePath .\data.env -TemplatePath .\letter.docx [-OutputName 'jane']
+```
+
+`-OutputName` is optional. Defaults: `<template-base>-filled` (FromValues), `<json-base>-filled` (FromJson object), `<kv-base>-filled` (FromKeyValue).
+
+**Gotchas to know:**
+- `-Values` keys starting with `#` **must be quoted** (`'#name' = ...`); unquoted `#name` is a PowerShell comment.
+- Key=value files use `;` as the comment marker (not `#`, which is reserved for placeholder names). Blank lines and `;`-prefixed lines are ignored. Each non-comment line is split on the **first** `=`.
+- Row-level customisation hooks (`Invoke-RowPreProcess`, `Get-CustomOutputFileName`) do not fire in single-document modes. `Invoke-DocPostProcess` still does.
 
 ## Calling from other scripts
 
@@ -135,11 +154,10 @@ Get-ADUser -Filter 'Department -eq "Sales"' -Properties EmailAddress, Title |
 
 ## How it works
 
-- Column headers (or `-Values` keys) are used as placeholder text **verbatim** — so `#replace1` replaces every occurrence of the literal string `#replace1` in the document. Choose any naming convention you like; the leading `#` is just a convention to make placeholders unlikely to collide with normal prose.
-- In Excel mode, a `title` column (case-insensitive) is treated specially: its value is used as the output filename instead of being a placeholder. Invalid filename characters are stripped.
-- Excel mode filename fallback (no `title` column):
-  - A worksheet with one data row produces `<worksheet>.docx`.
-  - A worksheet with multiple data rows produces `<worksheet>_1.docx`, `<worksheet>_2.docx`, etc.
-- `-Values` mode filename: `-OutputName` if provided, otherwise `<template-base>-filled.docx`.
+- Column headers / object property names / hashtable keys are used as placeholder text **verbatim** — so `#replace1` replaces every occurrence of the literal string `#replace1` in the document. Choose any naming convention you like; the leading `#` is just a convention to make placeholders unlikely to collide with normal prose.
+- In tabular modes (Excel, CSV, JSON array), a `title` column (case-insensitive) is treated specially: its value is used as the output filename instead of being a placeholder. Invalid filename characters are stripped.
+- Tabular filename fallback (no `title` column): a single-row source produces `<sheet>.docx`; a multi-row source produces `<sheet>_1.docx`, `<sheet>_2.docx`, etc. ("sheet" = worksheet name in Excel, file basename in CSV/JSON.)
+- Single-document filename: `-OutputName` if provided, otherwise `<source-base>-filled.docx`.
 - The template file is opened read-only and never modified.
 - Replacement runs across all story ranges (body, headers, footers, footnotes).
+- Replacement is case-sensitive and uses substring matching, with placeholders processed in length-descending order so `#replace1` cannot eat the prefix of `#replace10`.
