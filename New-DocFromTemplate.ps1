@@ -10,8 +10,8 @@
 
     FromCsv (default)
         Reads -CsvPath via Import-Csv. Each column header is a placeholder,
-        each row produces one document. Flat: no worksheets concept. No
-        external module dependency.
+        each row produces one document. Flat single table - no per-group
+        nesting. No external module dependency.
 
     FromJson
         Reads -JsonPath via ConvertFrom-Json. If the file parses to an
@@ -177,13 +177,14 @@ function Invoke-RowPreProcess {
     Get-CustomOutputFileName
 
     Called once per row to decide the output filename. Return $null to fall
-    back to the built-in rule (title column, then <sheet>.docx /
-    <sheet>_<n>.docx).
+    back to the built-in rule (title column, then <source>.docx /
+    <source>_<n>.docx).
 
     Parameters:
       $Row       -- the (possibly pre-processed) row
-      $SheetName -- the worksheet the row came from
-      $RowNumber -- 1-based index within the sheet
+      $SheetName -- a tag identifying the source (CSV/JSON file
+                    basename in tabular mode)
+      $RowNumber -- 1-based index within the source
 
     Return:
       A filename WITHOUT extension (the script appends .docx) or $null.
@@ -223,7 +224,9 @@ function Get-CustomOutputFileName {
     Parameters:
       $Document  -- the open Word.Document COM object
       $Row       -- the row that drove this document
-      $SheetName -- the worksheet the row came from
+      $SheetName -- a tag identifying the source (CSV/JSON file
+                    basename in tabular mode; '(values)' /
+                    '(json)' / '(keyvalue)' in single-doc modes)
 
     Return:
       Anything; the return value is ignored.
