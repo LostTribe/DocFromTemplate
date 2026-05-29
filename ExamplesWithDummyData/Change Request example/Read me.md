@@ -26,6 +26,20 @@ What's in this folder
                        #Replace14  -> Backout / rollback plan
                        #Replace15  -> Stakeholders / affected parties
 
+  data.csv           Same twelve CRs as data.xlsx, flattened into one CSV
+                     (no worksheet concept). Use this if you don't want
+                     the ImportExcel module dependency.
+
+  data.json          Same twelve CRs as data.xlsx, as a JSON array of
+                     objects. Property names match the column headers
+                     above.
+
+  data.txt           Key=value format, ONE record only - CR-2026-0142
+                     (the Core Switch Firmware Upgrade, first row of
+                     Infrastructure). Demonstrates the single-document
+                     input mode. Comments use ';' because '#' is
+                     reserved for placeholder names.
+
   cr-template.docx   A formatted Change Request form: page header with CR
                      reference, navy title bar, 3-column metadata grid,
                      requester table, accent-blue section headings,
@@ -38,23 +52,53 @@ What's in this folder
 
 How to run
 ----------
-Open PowerShell at the repository root (..\..) and run:
+Open PowerShell at the repository root (..\..). Pick the input format
+that matches where your data lives - all four produce filled .docx
+files in this folder's "output" subdirectory.
+
+
+From the Excel workbook (requires the ImportExcel module):
 
     .\New-DocFromTemplate.ps1 `
         -ExcelPath    ".\ExamplesWithDummyData\Change Request example\data.xlsx" `
         -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx"
 
-This fills cr-template.docx once per row and writes the resulting .docx
-files into this folder's "output" subdirectory, named after each row's
-"title" column - e.g.:
+
+From the CSV (no module required, built-in PowerShell):
+
+    .\New-DocFromTemplate.ps1 `
+        -CsvPath      ".\ExamplesWithDummyData\Change Request example\data.csv" `
+        -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx"
+
+
+From the JSON array (no module required):
+
+    .\New-DocFromTemplate.ps1 `
+        -JsonPath     ".\ExamplesWithDummyData\Change Request example\data.json" `
+        -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx"
+
+
+From the key=value text file (single document, no module required):
+
+    .\New-DocFromTemplate.ps1 `
+        -KeyValuePath ".\ExamplesWithDummyData\Change Request example\data.txt" `
+        -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx" `
+        -OutputName   'CR-2026-0142-Core-Switch-Firmware-Upgrade'
+
+
+The first three produce twelve files - one CR per row - named after
+each row's "title" column, e.g.:
 
     CR-2026-0142-Core-Switch-Firmware-Upgrade.docx
     CR-2026-0228-CRM-Major-Release.docx
     CR-2026-0314-Emergency-Critical-Vuln-Patch.docx
     ...
 
+The key=value run produces only the one CR (data.txt holds CR-2026-0142
+only).
 
-Only process one category:
+
+Only process one category (Excel only - CSV and JSON are flat):
 
     .\New-DocFromTemplate.ps1 `
         -ExcelPath    ".\ExamplesWithDummyData\Change Request example\data.xlsx" `
@@ -62,7 +106,7 @@ Only process one category:
         -Worksheet    'Security'
 
 
-Process more than one (but not all):
+Process more than one category (but not all):
 
     .\New-DocFromTemplate.ps1 `
         -ExcelPath    ".\ExamplesWithDummyData\Change Request example\data.xlsx" `
@@ -74,7 +118,7 @@ Send output somewhere else (omit -OutputDir to use the default
 "output\" folder beside the template):
 
     .\New-DocFromTemplate.ps1 `
-        -ExcelPath    ".\ExamplesWithDummyData\Change Request example\data.xlsx" `
+        -CsvPath      ".\ExamplesWithDummyData\Change Request example\data.csv" `
         -TemplatePath ".\ExamplesWithDummyData\Change Request example\cr-template.docx" `
         -OutputDir    .\out
 
@@ -83,7 +127,8 @@ Requirements
 ------------
   * Windows with Microsoft Word installed (Word COM automation is used)
   * PowerShell 5.1 or 7+
-  * The ImportExcel module:
+  * The ImportExcel module - ONLY for the Excel mode (-ExcelPath).
+    CSV, JSON, and key=value modes use built-in PowerShell:
         Install-Module ImportExcel -Scope CurrentUser
 
 
