@@ -89,23 +89,23 @@
     row's 'title' column or the fallback rule instead).
 
 .EXAMPLE
-    .\New-DocFromTemplate.ps1 -CsvPath .\rows.csv `
-                              -TemplatePath .\template.docx
+    .\New-DocFromTemplate.ps1 -CsvPath      ".\ExamplesWithDummyData\New Joiner example\data.csv" `
+                              -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
 
 .EXAMPLE
-    .\New-DocFromTemplate.ps1 -JsonPath .\rows.json `
-                              -TemplatePath .\template.docx
+    .\New-DocFromTemplate.ps1 -JsonPath     ".\ExamplesWithDummyData\New Joiner example\data.json" `
+                              -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
 
 .EXAMPLE
-    .\New-DocFromTemplate.ps1 -KeyValuePath .\data.env `
-                              -TemplatePath .\letter.docx `
-                              -OutputName 'one-off'
+    .\New-DocFromTemplate.ps1 -KeyValuePath ".\ExamplesWithDummyData\New Joiner example\data.txt" `
+                              -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx" `
+                              -OutputName   'Jane Doe - Welcome'
 
 .EXAMPLE
-    .\New-DocFromTemplate.ps1 -TemplatePath .\letter.docx `
-                              -Values @{ '#replace1' = 'Jane Doe'
-                                         '#replace2' = 'Engineer' } `
-                              -OutputName 'Jane-welcome'
+    .\New-DocFromTemplate.ps1 -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx" `
+                              -Values @{ '#replace1' = 'Riley Doe'
+                                         '#replace2' = 'Designer' } `
+                              -OutputName 'Riley-welcome'
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'FromCsv')]
