@@ -1,0 +1,20 @@
+; New Joiner example - key=value format
+; One file = one document. Same data as row 1 of data.xlsx (Jane Doe).
+;
+; Rules:
+;   - blank lines and lines starting with ';' are skipped
+;   - '#' cannot be the comment marker because it's reserved for
+;     placeholder names like #replace1
+;   - each non-comment line is split on the FIRST '=' into key/value
+;   - both sides are trimmed
+
+#replace1=Jane Doe
+#replace2=Senior Backend Engineer
+#replace3=2026-06-01
+#replace4=Platform Engineering
+#replace5=Pat Lead
+#replace6=pat.lead@acmecorp.com
+#replace7=EMP-2026-1042
+#replace8=London HQ, Floor 4, Desk E-217
+#replace9=Chris People
+#replace10=chris.people@acmecorp.com
