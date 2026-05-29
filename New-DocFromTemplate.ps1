@@ -67,6 +67,13 @@
 .PARAMETER CsvPath
     Path to the source .csv file. Required in FromCsv mode.
 
+.PARAMETER Delimiter
+    FromCsv only. Field delimiter for the CSV. Defaults to ','. Set it to
+    ';' for semicolon-delimited exports (common in non-English Excel
+    locales) or "`t" for tab-delimited files, without having to edit the
+    file. The same delimiter is used by both the header pre-check and
+    Import-Csv so they can never disagree.
+
 .PARAMETER JsonPath
     Path to the source .json file. Required in FromJson mode.
 
@@ -93,6 +100,12 @@
                               -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
 
 .EXAMPLE
+    # Semicolon-delimited CSV (e.g. exported from Excel in a non-EN locale):
+    .\New-DocFromTemplate.ps1 -CsvPath      ".\data_semicolon.csv" `
+                              -Delimiter    ';' `
+                              -TemplatePath ".\template.docx"
+
+.EXAMPLE
     .\New-DocFromTemplate.ps1 -JsonPath     ".\ExamplesWithDummyData\New Joiner example\data.json" `
                               -TemplatePath ".\ExamplesWithDummyData\New Joiner example\template.docx"
 
@@ -111,6 +124,9 @@
 [CmdletBinding(DefaultParameterSetName = 'FromCsv')]
 param(
     [Parameter(Mandatory, ParameterSetName = 'FromCsv')]      [string]    $CsvPath,
+
+    [Parameter(ParameterSetName = 'FromCsv')]
+    [ValidateLength(1, 1)]                                    [string]    $Delimiter = ',',
 
     [Parameter(Mandatory, ParameterSetName = 'FromJson')]     [string]    $JsonPath,
 
@@ -300,6 +316,34 @@ function Get-SafeFileName {
 
 
 <#
+    Get-CsvFileEncoding
+
+    Sniffs the leading bytes of a file for a byte-order mark and returns a
+    small descriptor: a human-readable Name, the matching [Text.Encoding]
+    to decode with, and a Bom flag. Used by the FromCsv header pre-check so
+    it can decode the header line with the same encoding the file was saved
+    in (notably UTF-16, which Excel's "Unicode Text (*.txt)" export uses).
+
+    No BOM is reported as 'UTF-8 / ANSI (no BOM)' and decoded as UTF-8;
+    that covers plain ASCII as well, since ASCII is a subset of UTF-8.
+#>
+function Get-CsvFileEncoding {
+    param([Parameter(Mandatory)] [byte[]] $Bytes)
+
+    if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
+        return [pscustomobject]@{ Name = 'UTF-8 with BOM'; Encoding = (New-Object System.Text.UTF8Encoding $true); Bom = $true }
+    }
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE) {
+        return [pscustomobject]@{ Name = 'UTF-16 LE'; Encoding = [System.Text.Encoding]::Unicode; Bom = $true }
+    }
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFE -and $Bytes[1] -eq 0xFF) {
+        return [pscustomobject]@{ Name = 'UTF-16 BE'; Encoding = [System.Text.Encoding]::BigEndianUnicode; Bom = $true }
+    }
+    return [pscustomobject]@{ Name = 'UTF-8 / ANSI (no BOM)'; Encoding = (New-Object System.Text.UTF8Encoding $false); Bom = $false }
+}
+
+
+<#
     Read-KeyValueFile
 
     Parse a flat key=value text file into a hashtable of placeholder =>
@@ -468,24 +512,97 @@ switch ($PSCmdlet.ParameterSetName) {
         #
         # Two common shapes hit the duplicate check:
         #   * A real repeated header ('name,name,#role')
-        #   * Trailing commas creating multiple empty-string headers
+        #   * Trailing delimiters creating multiple empty-string headers
         #     ('title,#a,#b,,') - the user usually doesn't realise their
         #     CSV ends with stray columns
-        $headerLine = Get-Content -LiteralPath $CsvPath -TotalCount 1
-        if (-not $headerLine) { throw "CSV is empty: $CsvPath" }
-        $headers = $headerLine -split ',' | ForEach-Object { $_.Trim().Trim('"') }
-        $dupes = $headers | Group-Object | Where-Object Count -gt 1
+        #
+        # The probe below parses the header with ConvertFrom-Csv - the SAME
+        # parser Import-Csv uses - so the two can never disagree about how
+        # many columns there are or what they are called. A naive
+        # `-split ','` cannot see quoted commas ("a,b"), tab/semicolon
+        # delimiters, or a UTF-16 file, all of which made the old check miss
+        # duplicates that Import-Csv then choked on with "The member 'X' is
+        # already present".
+
+        # Read the raw bytes once: we need them to detect the encoding (BOM)
+        # and to decode the header line ourselves rather than trusting the
+        # caller's console encoding.
+        $rawBytes = [System.IO.File]::ReadAllBytes($CsvPath)
+        if ($rawBytes.Length -eq 0) { throw "CSV is empty: $CsvPath" }
+
+        $encInfo = Get-CsvFileEncoding -Bytes $rawBytes
+        $text    = $encInfo.Encoding.GetString($rawBytes)
+        # Strip a leading BOM / zero-width no-break space so it never becomes
+        # part of the first header name.
+        $text      = $text.TrimStart([char]0xFEFF)
+        $firstLine = ($text -split "`r`n|`n|`r", 2)[0]
+        if ([string]::IsNullOrWhiteSpace($firstLine)) { throw "CSV is empty: $CsvPath" }
+
+        # Catch Excel's "Unicode Text (*.txt)" export and other mismatched
+        # delimiters early: a comma-delimited run against a file whose header
+        # has no commas but does have tabs/semicolons would otherwise parse
+        # into a single mangled column (0 usable rows) with no clue why.
+        if ($Delimiter -eq ',' -and $firstLine -notmatch ',') {
+            if ($firstLine -match "`t") {
+                $enc = if ($encInfo.Name -like 'UTF-16*') {
+                    "The file is $($encInfo.Name) and tab-delimited - that is Excel's 'Unicode Text (*.txt)' export, not a CSV. "
+                } else {
+                    'The header is tab-delimited. '
+                }
+                throw "CSV header contains no commas but does contain tab characters. ${enc}Re-save it as 'CSV UTF-8 (Comma delimited)' in Excel, or re-run with -Delimiter `"``t`". File: $CsvPath"
+            }
+            if ($firstLine -match ';') {
+                throw "CSV header contains no commas but does contain semicolons; it looks semicolon-delimited (common in non-English Excel locales). Re-run with -Delimiter ';'. File: $CsvPath"
+            }
+        }
+
+        # Import-Csv treats a record whose first field begins with '#' as a
+        # COMMENT and silently skips it. If the HEADER row's first column
+        # starts with '#' (e.g. a title-less sheet that opens straight into
+        # '#replace1,#replace2,...'), Import-Csv drops the header, promotes
+        # the first data row to header, and you get garbage columns or the
+        # "Sheet 'x' has no data rows; skipping" warning - with no clue why.
+        # The rule, determined empirically and matching Import-Csv exactly:
+        # trim leading whitespace, peel one optional leading double-quote,
+        # then test for a leading '#'. (A quoted '"#col"' is still treated
+        # as a comment by Import-Csv, even though ConvertFrom-Csv is not -
+        # so we cannot rely on the parse below to surface this.)
+        $commentProbe = $firstLine.TrimStart()
+        if ($commentProbe.StartsWith('"')) { $commentProbe = $commentProbe.Substring(1) }
+        if ($commentProbe.StartsWith('#')) {
+            throw "CSV header row's first column begins with '#', so Import-Csv treats the entire header line as a comment and skips it (leaving no usable columns - you would see a 'no data rows' warning). Give the sheet a 'title' column, or any first column that does not start with '#'. File: $CsvPath"
+        }
+
+        # Parse the header line with the real CSV parser. We feed it the
+        # header line as a *data* row under throwaway, guaranteed-unique
+        # synthetic column names, so the parser returns each field's value
+        # (i.e. the actual header text) WITHOUT itself tripping the
+        # duplicate-member error we are trying to report cleanly. The
+        # synthetic count is an upper bound (raw delimiter count + 2); any
+        # surplus columns come back $null and are dropped.
+        $delimCount   = ($firstLine.ToCharArray() | Where-Object { $_ -eq $Delimiter[0] }).Count
+        $synthHeaders = 0..($delimCount + 1) | ForEach-Object { "__probe$_" }
+        $parsed       = $firstLine | ConvertFrom-Csv -Delimiter $Delimiter -Header $synthHeaders
+        $headers      = foreach ($name in $synthHeaders) {
+            $v = $parsed.$name
+            if ($null -ne $v) { [string]$v }
+        }
+
+        # Group-Object is case-insensitive by default, matching PSCustomObject
+        # member-name collision semantics (so 'None' and 'none' would clash,
+        # exactly as Import-Csv sees it).
+        $dupes = $headers | Group-Object | Where-Object { $_.Count -gt 1 }
         if ($dupes) {
             $detail = foreach ($d in $dupes) {
                 if ($d.Name) { "'$($d.Name)' (x$($d.Count))" }
-                else         { "$($d.Count) empty header(s) - usually trailing commas" }
+                else         { "$($d.Count) empty header(s) - usually trailing delimiters" }
             }
             throw "CSV has duplicate column header(s): $($detail -join ', '). Each placeholder name must be unique. File: $CsvPath"
         }
 
         $dataSheets = @( [pscustomobject]@{
             Name = [IO.Path]::GetFileNameWithoutExtension($CsvPath)
-            Rows = @(Import-Csv -LiteralPath $CsvPath)
+            Rows = @(Import-Csv -LiteralPath $CsvPath -Delimiter $Delimiter)
         } )
     }
 
