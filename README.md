@@ -1,6 +1,6 @@
 # DocFromTemplate
 
-PowerShell tool that fills a Word `.docx` template by replacing placeholder strings. Values can come from rows in an Excel workbook (one document per row) or be supplied directly via a hashtable (one document — handy for calling from other scripts).
+DocFromTemplate is a PowerShell tool that fills a Word `.docx` template by replacing placeholder strings. Values can come from rows in an Excel workbook (one document per row) or be supplied directly via a hashtable (one document — handy for calling from other scripts).
 
 For each row in each worksheet, every placeholder in the template (e.g. `#replace1`, `#replace2`) is replaced with the value from the column whose header matches the placeholder text exactly. One filled `.docx` is produced per row.
 
@@ -8,8 +8,18 @@ For each row in each worksheet, every placeholder in the template (e.g. `#replac
 
 - Windows with Microsoft Word installed (Word COM automation is used)
 - PowerShell 5.1 or 7+
-- [`ImportExcel`](https://www.powershellgallery.com/packages/ImportExcel) module: `Install-Module ImportExcel -Scope CurrentUser`
-  - **Only needed for Excel mode** (`-ExcelPath`). CSV, JSON, key=value, and direct-`-Values` modes all use built-in PowerShell — no external module required. The script imports `ImportExcel` lazily, *only* when `-ExcelPath` is supplied, so a clone that never touches Excel mode will never see a "module not installed" error.
+
+That's it for CSV, JSON, key=value, and direct-`-Values` modes — they all use built-in PowerShell.
+
+### Optional: Excel mode
+
+Only if you want to use `-ExcelPath`, install the [`ImportExcel`](https://www.powershellgallery.com/packages/ImportExcel) module:
+
+```powershell
+Install-Module ImportExcel -Scope CurrentUser
+```
+
+The script imports it lazily — it's loaded only when `-ExcelPath` is supplied, so a clone that never touches Excel mode will never see a "module not installed" error.
 
 ## Quick start
 
