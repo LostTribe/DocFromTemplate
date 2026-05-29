@@ -1,32 +1,57 @@
 <#
 .SYNOPSIS
-    Fills a Word .docx template by replacing placeholder strings. Values
-    can come from rows in an Excel workbook (one document per row) or be
-    supplied directly via a hashtable (one document).
+    Fills a Word .docx template by replacing placeholder strings. Values can
+    come from an Excel workbook, a CSV file, a JSON file, a key=value text
+    file, or a hashtable supplied directly.
 
 .DESCRIPTION
-    Two parameter sets:
+    Five parameter sets:
 
     FromExcel (default)
         For every worksheet in -ExcelPath the script reads each data row,
         opens the template, then performs a case-sensitive find & replace
         for each column header found in the row. Produces one document
-        per row.
+        per row. Requires the ImportExcel module.
+
+    FromCsv
+        Reads -CsvPath via Import-Csv. Each column header is a placeholder,
+        each row produces one document. Flat: no worksheets concept. No
+        external module dependency.
+
+    FromJson
+        Reads -JsonPath via ConvertFrom-Json. If the file parses to an
+        array of objects, each element becomes one document. If it parses
+        to a single object, one document is produced (like FromValues).
+        Nested objects/arrays in property values are coerced to string by
+        PowerShell and likely render as "@{...}" or "System.Object[]".
+
+    FromKeyValue
+        Reads -KeyValuePath line by line. Each non-blank, non-comment line
+        is split on the first '=' into a key and a value. Blank lines and
+        lines starting with ';' are ignored ('#' is reserved for placeholder
+        names like #replace1, so it cannot also be the comment marker).
+        Produces a single document.
 
     FromValues
-        Substitutes the placeholder/value pairs in -Values into the
-        template once and writes a single document. Useful for one-off
-        renders that do not warrant a workbook.
+        Substitutes the placeholder/value pairs in -Values into the template
+        once and writes a single document. Useful for one-off renders that
+        do not warrant a file.
 
-    Naming rules (FromExcel):
+    Naming rules (tabular sources: FromExcel, FromCsv, FromJson-array):
       * If a row has a 'title' column (case-insensitive) its value is the
         output filename.
-      * Otherwise a single-row sheet produces <sheet>.docx, and a
-        multi-row sheet produces <sheet>_1.docx, <sheet>_2.docx, ...
+      * Otherwise a single-row sheet produces <sheet>.docx, and a multi-row
+        sheet produces <sheet>_1.docx, <sheet>_2.docx, ... ('sheet' is the
+        worksheet name in FromExcel, the file basename in FromCsv and
+        FromJson.)
       * Duplicates within a run get a numeric suffix to disambiguate.
 
-    Naming rules (FromValues):
-      * Use -OutputName if provided, otherwise <template-base>-filled.docx.
+    Naming rules (single-doc sources: FromValues, FromJson-object,
+    FromKeyValue):
+      * Use -OutputName if provided, otherwise:
+          FromValues   -> <template-base>-filled.docx
+          FromJson     -> <json-base>-filled.docx
+          FromKeyValue -> <kv-base>-filled.docx
 
     The template file is opened read-only and is never modified.
 
@@ -39,16 +64,29 @@
             Invoke-DocPostProcess    -- modify the open Word document
                                         after replacements but before save
 
-        In FromValues mode, Invoke-RowPreProcess and Get-CustomOutputFileName
-        are NOT called (you are already supplying values and the name
-        directly). Invoke-DocPostProcess still fires; $Row is the values
-        hashtable cast to a PSCustomObject and $SheetName is '(values)'.
+        In single-doc modes (FromValues, FromJson-object, FromKeyValue),
+        Invoke-RowPreProcess and Get-CustomOutputFileName are NOT called.
+        Invoke-DocPostProcess still fires; $Row is a PSCustomObject
+        synthesised from the values and $SheetName is '(values)', '(json)',
+        or '(keyvalue)' respectively.
 
 .PARAMETER ExcelPath
     Path to the source .xlsx workbook. Required in FromExcel mode.
 
+.PARAMETER CsvPath
+    Path to the source .csv file. Required in FromCsv mode.
+
+.PARAMETER JsonPath
+    Path to the source .json file. Required in FromJson mode.
+
+.PARAMETER KeyValuePath
+    Path to the source key=value text file. Required in FromKeyValue mode.
+
+.PARAMETER Values
+    Hashtable of placeholder => value pairs. Required in FromValues mode.
+
 .PARAMETER TemplatePath
-    Path to the Word .docx template. Required in both modes.
+    Path to the Word .docx template. Required in every mode.
 
 .PARAMETER OutputDir
     Folder to write filled documents into. Defaults to an 'output' folder
@@ -58,23 +96,27 @@
     FromExcel only. Optional list of worksheet names. Defaults to every
     sheet in the workbook.
 
-.PARAMETER Values
-    FromValues only. Hashtable of placeholder => value pairs. Required
-    in FromValues mode.
-
 .PARAMETER OutputName
-    FromValues only. Output filename (without extension). Defaults to
-    <template-base>-filled.
-
-.EXAMPLE
-    .\New-DocFromTemplate.ps1 -ExcelPath .\samples\data.xlsx `
-                              -TemplatePath .\samples\template.docx
+    FromValues, FromJson, FromKeyValue. Output filename without extension.
+    Ignored if the JSON file parses to an array (filenames come from each
+    row's 'title' column or the fallback rule instead).
 
 .EXAMPLE
     .\New-DocFromTemplate.ps1 -ExcelPath .\data.xlsx `
+                              -TemplatePath .\template.docx
+
+.EXAMPLE
+    .\New-DocFromTemplate.ps1 -CsvPath .\rows.csv `
+                              -TemplatePath .\template.docx
+
+.EXAMPLE
+    .\New-DocFromTemplate.ps1 -JsonPath .\rows.json `
+                              -TemplatePath .\template.docx
+
+.EXAMPLE
+    .\New-DocFromTemplate.ps1 -KeyValuePath .\data.env `
                               -TemplatePath .\letter.docx `
-                              -Worksheet 'contoso','tailspin' `
-                              -OutputDir 'C:\merged'
+                              -OutputName 'one-off'
 
 .EXAMPLE
     .\New-DocFromTemplate.ps1 -TemplatePath .\letter.docx `
@@ -85,11 +127,23 @@
 
 [CmdletBinding(DefaultParameterSetName = 'FromExcel')]
 param(
-    [Parameter(Mandatory, ParameterSetName = 'FromExcel')] [string]    $ExcelPath,
-    [Parameter(Mandatory)]                                 [string]    $TemplatePath,
-    [Parameter(ParameterSetName = 'FromExcel')]            [string[]]  $Worksheet,
-    [Parameter(Mandatory, ParameterSetName = 'FromValues')][hashtable] $Values,
-    [Parameter(ParameterSetName = 'FromValues')]           [string]    $OutputName,
+    [Parameter(Mandatory, ParameterSetName = 'FromExcel')]    [string]    $ExcelPath,
+    [Parameter(ParameterSetName = 'FromExcel')]               [string[]]  $Worksheet,
+
+    [Parameter(Mandatory, ParameterSetName = 'FromCsv')]      [string]    $CsvPath,
+
+    [Parameter(Mandatory, ParameterSetName = 'FromJson')]     [string]    $JsonPath,
+
+    [Parameter(Mandatory, ParameterSetName = 'FromKeyValue')] [string]    $KeyValuePath,
+
+    [Parameter(Mandatory, ParameterSetName = 'FromValues')]   [hashtable] $Values,
+
+    [Parameter(ParameterSetName = 'FromValues')]
+    [Parameter(ParameterSetName = 'FromJson')]
+    [Parameter(ParameterSetName = 'FromKeyValue')]            [string]    $OutputName,
+
+    [Parameter(Mandatory)]                                    [string]    $TemplatePath,
+
     [string] $OutputDir
 )
 
@@ -212,19 +266,28 @@ function Invoke-DocPostProcess {
 
 if (-not (Test-Path $TemplatePath)) { throw "Template not found: $TemplatePath" }
 
-if ($PSCmdlet.ParameterSetName -eq 'FromExcel') {
-    if (-not (Test-Path $ExcelPath)) { throw "Excel file not found: $ExcelPath" }
-    if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
-        throw "ImportExcel module not installed. Run: Install-Module ImportExcel -Scope CurrentUser"
+switch ($PSCmdlet.ParameterSetName) {
+    'FromExcel' {
+        if (-not (Test-Path $ExcelPath)) { throw "Excel file not found: $ExcelPath" }
+        if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
+            throw "ImportExcel module not installed. Run: Install-Module ImportExcel -Scope CurrentUser"
+        }
+        Import-Module ImportExcel
     }
-    Import-Module ImportExcel
+    'FromCsv'      { if (-not (Test-Path $CsvPath))      { throw "CSV file not found: $CsvPath" } }
+    'FromJson'     { if (-not (Test-Path $JsonPath))     { throw "JSON file not found: $JsonPath" } }
+    'FromKeyValue' { if (-not (Test-Path $KeyValuePath)) { throw "Key=value file not found: $KeyValuePath" } }
+    'FromValues'   { }
 }
 
 # Word COM does not understand relative paths, so resolve everything to
 # fully qualified paths up front.
 $TemplatePath = (Resolve-Path $TemplatePath).Path
-if ($PSCmdlet.ParameterSetName -eq 'FromExcel') {
-    $ExcelPath = (Resolve-Path $ExcelPath).Path
+switch ($PSCmdlet.ParameterSetName) {
+    'FromExcel'    { $ExcelPath    = (Resolve-Path $ExcelPath   ).Path }
+    'FromCsv'      { $CsvPath      = (Resolve-Path $CsvPath     ).Path }
+    'FromJson'     { $JsonPath     = (Resolve-Path $JsonPath    ).Path }
+    'FromKeyValue' { $KeyValuePath = (Resolve-Path $KeyValuePath).Path }
 }
 
 if (-not $OutputDir) {
@@ -234,22 +297,6 @@ if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir | Out-Null
 }
 $OutputDir = (Resolve-Path $OutputDir).Path
-
-
-# Worksheet selection (FromExcel only)
-# Get-ExcelSheetInfo returns objects describing each sheet; we only need
-# the names so they can be filtered against -Worksheet (when supplied).
-
-$sheets = @()
-if ($PSCmdlet.ParameterSetName -eq 'FromExcel') {
-    $sheets = Get-ExcelSheetInfo -Path $ExcelPath | Select-Object -ExpandProperty Name
-    if ($Worksheet) {
-        $sheets = $sheets | Where-Object { $Worksheet -contains $_ }
-    }
-    if (-not $sheets) {
-        throw "No matching worksheets found."
-    }
-}
 
 
 # Helpers
@@ -272,6 +319,45 @@ function Get-SafeFileName {
 
     if ([string]::IsNullOrWhiteSpace($clean)) { return $null }
     return $clean
+}
+
+
+<#
+    Read-KeyValueFile
+
+    Parse a flat key=value text file into a hashtable of placeholder =>
+    value pairs. Rules:
+      * Blank lines are skipped.
+      * Lines whose first non-whitespace character is ';' are comments
+        and are skipped. ('#' is reserved for placeholder names like
+        #replace1, so it cannot also be the comment marker.)
+      * Other lines are split on the FIRST '='. Anything before is the
+        key; anything after is the value. Both are trimmed.
+      * Lines without an '=' produce a warning and are skipped.
+#>
+function Read-KeyValueFile {
+    param([Parameter(Mandatory)] [string] $Path)
+
+    $result  = @{}
+    $lineNum = 0
+    foreach ($line in (Get-Content -LiteralPath $Path)) {
+        $lineNum++
+        $trimmed = $line.Trim()
+        if ([string]::IsNullOrEmpty($trimmed)) { continue }
+        if ($trimmed.StartsWith(';'))          { continue }
+
+        $eq = $trimmed.IndexOf('=')
+        if ($eq -lt 1) {
+            Write-Warning "${Path} line ${lineNum}: missing '='; skipping."
+            continue
+        }
+        $key = $trimmed.Substring(0, $eq).Trim()
+        $val = $trimmed.Substring($eq + 1).Trim()
+        if ($key) {
+            $result[$key] = $val
+        }
+    }
+    return $result
 }
 
 
@@ -376,6 +462,99 @@ function Save-FilledDocument {
 }
 
 
+# Source loading
+# Each input source is normalised into one of two shapes:
+#
+#   $dataSheets       -- @( @{ Name='...'; Rows=@(<PSCustomObject>, ...) }, ... )
+#                        used by the tabular path (FromExcel, FromCsv,
+#                        FromJson when the file is an array).
+#
+#   $singleValues +   -- hashtable + base filename (no extension) + a tag
+#   $singleOutputName    that goes into the result's Sheet column. Used by
+#   + $singleSheetTag    the single-doc path (FromValues, FromJson when the
+#                        file is a single object, FromKeyValue).
+#
+# After this block exactly one of those two is populated.
+
+$dataSheets       = $null
+$singleValues     = $null
+$singleOutputName = $null
+$singleSheetTag   = $null
+
+switch ($PSCmdlet.ParameterSetName) {
+    'FromExcel' {
+        $sheets = Get-ExcelSheetInfo -Path $ExcelPath | Select-Object -ExpandProperty Name
+        if ($Worksheet) {
+            $sheets = $sheets | Where-Object { $Worksheet -contains $_ }
+        }
+        if (-not $sheets) { throw "No matching worksheets found." }
+        $dataSheets = foreach ($sheet in $sheets) {
+            [pscustomobject]@{
+                Name = $sheet
+                Rows = @(Import-Excel -Path $ExcelPath -WorksheetName $sheet)
+            }
+        }
+    }
+
+    'FromCsv' {
+        $dataSheets = @( [pscustomobject]@{
+            Name = [IO.Path]::GetFileNameWithoutExtension($CsvPath)
+            Rows = @(Import-Csv -LiteralPath $CsvPath)
+        } )
+    }
+
+    'FromJson' {
+        $rawJson = Get-Content -LiteralPath $JsonPath -Raw
+        $json    = $rawJson | ConvertFrom-Json
+        if ($null -eq $json) { throw "JSON parsed to null: $JsonPath" }
+
+        # ConvertFrom-Json auto-unwraps single-element arrays in Windows
+        # PowerShell (and PS 7 without -NoEnumerate), so $json -is [array]
+        # is unreliable when there's exactly one row. Inspect the raw text
+        # instead: a JSON document whose first non-whitespace character is
+        # '[' is an array, regardless of element count.
+        $looksLikeArray = $rawJson.TrimStart() -match '^\['
+
+        if ($looksLikeArray) {
+            # Array of objects -> tabular, one document per element.
+            # @($json) re-wraps the single-element case so the row loop sees
+            # an array either way.
+            $dataSheets = @( [pscustomobject]@{
+                Name = [IO.Path]::GetFileNameWithoutExtension($JsonPath)
+                Rows = @($json)
+            } )
+            if ($OutputName) {
+                Write-Warning "-OutputName is ignored when JSON parses to an array (filenames come from each row's 'title' column or the fallback rule)."
+            }
+        }
+        else {
+            # Single object -> one document, treated like FromValues.
+            $singleValues = @{}
+            foreach ($prop in $json.PSObject.Properties) {
+                $singleValues[[string]$prop.Name] = $prop.Value
+            }
+            $singleOutputName = if ($OutputName) { $OutputName } `
+                                else { [IO.Path]::GetFileNameWithoutExtension($JsonPath) + '-filled' }
+            $singleSheetTag = '(json)'
+        }
+    }
+
+    'FromKeyValue' {
+        $singleValues     = Read-KeyValueFile -Path $KeyValuePath
+        $singleOutputName = if ($OutputName) { $OutputName } `
+                            else { [IO.Path]::GetFileNameWithoutExtension($KeyValuePath) + '-filled' }
+        $singleSheetTag   = '(keyvalue)'
+    }
+
+    'FromValues' {
+        $singleValues     = $Values
+        $singleOutputName = if ($OutputName) { $OutputName } `
+                            else { [IO.Path]::GetFileNameWithoutExtension($TemplatePath) + '-filled' }
+        $singleSheetTag   = '(values)'
+    }
+}
+
+
 # Main merge
 # A single Word.Application instance is reused across every row. Spinning
 # Word up and down per row is slow and error-prone.
@@ -389,57 +568,52 @@ try {
     $word.Visible       = $false
     $word.DisplayAlerts = 0
 
-    if ($PSCmdlet.ParameterSetName -eq 'FromValues') {
+    if ($singleValues) {
 
-        # FromValues: single document, values supplied directly.
-        # Row-level hooks are skipped; the user is in full control.
-        # Invoke-DocPostProcess still fires inside Save-FilledDocument.
+        # Single-doc path: values supplied directly (FromValues, FromJson
+        # when the file is a single object, FromKeyValue).
+        # Row-level hooks are skipped; the user / adapter is in full
+        # control. Invoke-DocPostProcess still fires inside
+        # Save-FilledDocument.
 
         $replacements = @{}
-        foreach ($key in $Values.Keys) {
+        foreach ($key in $singleValues.Keys) {
             if ([string]::IsNullOrEmpty($key)) { continue }
             $name = [string]$key
             if ($name -notmatch '^#') {
                 Write-Warning "Placeholder '$name' has no leading '#'; using verbatim."
             }
-            $val = if ($null -eq $Values[$key]) { '' } else { [string]$Values[$key] }
+            $val = if ($null -eq $singleValues[$key]) { '' } else { [string]$singleValues[$key] }
             $replacements[$name] = $val
         }
 
-        if ($OutputName) {
-            $baseName = Get-SafeFileName $OutputName
-            if (-not $baseName) {
-                throw "OutputName '$OutputName' sanitised to an empty string."
-            }
-        }
-        else {
-            $baseName = [IO.Path]::GetFileNameWithoutExtension($TemplatePath) + '-filled'
+        $baseName = Get-SafeFileName $singleOutputName
+        if (-not $baseName) {
+            throw "Output name '$singleOutputName' sanitised to an empty string."
         }
         $outPath = Join-Path $OutputDir "$baseName.docx"
 
-        # Synthesise a $Row for Invoke-DocPostProcess. Cast to PSCustomObject
-        # so hook code that reads $Row.SomeProp behaves the same as in
-        # FromExcel mode.
-        $synthRow = [pscustomobject]$Values
+        # Synthesise a $Row for Invoke-DocPostProcess so hook code that
+        # reads $Row.SomeProp behaves the same as in tabular modes.
+        $synthRow = [pscustomobject]$singleValues
 
         Save-FilledDocument -Word $word `
                             -TemplatePath $TemplatePath `
                             -Replacements $replacements `
                             -OutPath $outPath `
                             -Row $synthRow `
-                            -SheetName '(values)'
+                            -SheetName $singleSheetTag
 
-        $results += [pscustomobject]@{ Sheet = '(values)'; Row = 1; Output = $outPath }
+        $results += [pscustomobject]@{ Sheet = $singleSheetTag; Row = 1; Output = $outPath }
         Write-Host "Wrote $outPath"
     }
     else {
 
-        # FromExcel: one document per row across every selected worksheet.
-        foreach ($sheet in $sheets) {
-
-            # Force array semantics so a one-row sheet still indexes cleanly
-            # via $rows[0] rather than collapsing to a bare object.
-            $rows = @(Import-Excel -Path $ExcelPath -WorksheetName $sheet)
+        # Tabular path: one document per row across every sheet bundle
+        # (FromExcel, FromCsv, FromJson when the file is an array).
+        foreach ($sheetBundle in $dataSheets) {
+            $sheet = $sheetBundle.Name
+            $rows  = @($sheetBundle.Rows)
 
             if (-not $rows) {
                 Write-Warning "Sheet '$sheet' has no data rows; skipping."
