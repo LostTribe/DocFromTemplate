@@ -67,6 +67,13 @@
 .PARAMETER CsvPath
     Path to the source .csv file. Required in FromCsv mode.
 
+.PARAMETER Delimiter
+    FromCsv only. Field delimiter used by Import-Csv and the header probe.
+    Defaults to ',' (standard CSV). Use ';' for semicolon-delimited files
+    that some non-English Excel locales produce, or "`t" for tab-delimited
+    files (Excel's "Unicode Text" save uses tabs, and the script detects
+    that and tells you so explicitly).
+
 .PARAMETER JsonPath
     Path to the source .json file. Required in FromJson mode.
 
@@ -111,6 +118,7 @@
 [CmdletBinding(DefaultParameterSetName = 'FromCsv')]
 param(
     [Parameter(Mandatory, ParameterSetName = 'FromCsv')]      [string]    $CsvPath,
+    [Parameter(ParameterSetName = 'FromCsv')]                 [char]      $Delimiter = ',',
 
     [Parameter(Mandatory, ParameterSetName = 'FromJson')]     [string]    $JsonPath,
 
@@ -338,6 +346,118 @@ function Read-KeyValueFile {
 }
 
 
+<#
+    Get-CsvHeaderInfo
+
+    Inspect the first line of a CSV file and report what's actually on
+    disk: the byte-level encoding (UTF-8, UTF-8 BOM, UTF-16 LE, UTF-16 BE),
+    the raw header line, and the header tokens after CSV-aware parsing.
+
+    The token parser is hand-rolled rather than naive ' -split ' because
+    real CSVs may have:
+      * commas inside double-quoted fields  ("Smith, J",#role,#status)
+      * doubled "" inside quoted fields     ("He said ""hi""",#note)
+      * non-comma delimiters (semicolon in many EU Excel locales, TAB in
+        Excel's "Unicode Text" save)
+
+    The tokeniser follows the same rules Import-Csv uses, so what comes
+    out here is what Import-Csv would have seen when building rows. That
+    matters because Import-Csv refuses to build a row object when two
+    columns share a name, and the error message ("the member 'X' is
+    already present") gives no file path and no column name. We catch
+    the dupes here first and re-throw with both.
+
+    Returns a PSCustomObject:
+      Encoding    -- 'UTF-8 (no BOM)' | 'UTF-8 BOM' | 'UTF-16 LE' | 'UTF-16 BE'
+      HeaderLine  -- the raw first line as a string ($null if file empty)
+      Headers     -- string[] of parsed header tokens
+#>
+function Get-CsvHeaderInfo {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [char] $Delimiter = ','
+    )
+
+    # ---- Encoding detection from BOM ----
+    # Open with FileShare.ReadWrite so we can probe a CSV that's currently
+    # open in Excel (without this, OpenRead takes an exclusive lock and
+    # fails with "the process cannot access the file" mid-edit).
+    $bom = New-Object byte[] 4
+    $fs  = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try { [void]$fs.Read($bom, 0, 4) } finally { $fs.Close() }
+
+    $encoding = [System.Text.Encoding]::UTF8     # the sensible default
+    $encName  = 'UTF-8 (no BOM)'
+
+    if ($bom[0] -eq 0xEF -and $bom[1] -eq 0xBB -and $bom[2] -eq 0xBF) {
+        $encName  = 'UTF-8 BOM'
+        # UTF8Encoding already accepts BOM transparently
+    }
+    elseif ($bom[0] -eq 0xFF -and $bom[1] -eq 0xFE) {
+        $encName  = 'UTF-16 LE'
+        $encoding = [System.Text.Encoding]::Unicode
+    }
+    elseif ($bom[0] -eq 0xFE -and $bom[1] -eq 0xFF) {
+        $encName  = 'UTF-16 BE'
+        $encoding = [System.Text.Encoding]::BigEndianUnicode
+    }
+
+    # ---- Read first line in detected encoding ----
+    # Same FileShare.ReadWrite reason as the BOM probe above.
+    $fs2 = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    $sr  = [System.IO.StreamReader]::new($fs2, $encoding, $true)
+    try { $line = $sr.ReadLine() } finally { $sr.Close(); $fs2.Close() }
+
+    if ($null -eq $line) {
+        return [pscustomobject]@{ Encoding = $encName; HeaderLine = $null; Headers = @() }
+    }
+
+    # ---- CSV-aware tokeniser ----
+    # State machine: walk the line one char at a time, tracking whether
+    # we're inside a quoted field. Doubled quotes inside a quoted field
+    # ("a""b") collapse to a single literal quote.
+    $tokens   = New-Object 'System.Collections.Generic.List[string]'
+    $sb       = New-Object System.Text.StringBuilder
+    $inQuotes = $false
+    for ($i = 0; $i -lt $line.Length; $i++) {
+        $c = $line[$i]
+        if ($inQuotes) {
+            if ($c -eq '"') {
+                if ($i + 1 -lt $line.Length -and $line[$i + 1] -eq '"') {
+                    [void]$sb.Append('"')
+                    $i++
+                }
+                else {
+                    $inQuotes = $false
+                }
+            }
+            else {
+                [void]$sb.Append($c)
+            }
+        }
+        else {
+            if ($c -eq $Delimiter) {
+                [void]$tokens.Add($sb.ToString().Trim())
+                [void]$sb.Clear()
+            }
+            elseif ($c -eq '"' -and $sb.Length -eq 0) {
+                $inQuotes = $true
+            }
+            else {
+                [void]$sb.Append($c)
+            }
+        }
+    }
+    [void]$tokens.Add($sb.ToString().Trim())
+
+    return [pscustomobject]@{
+        Encoding   = $encName
+        HeaderLine = $line
+        Headers    = $tokens.ToArray()
+    }
+}
+
+
 # Word constants
 # Numeric values used by Word.Application's COM API. Naming them here makes
 # the call sites readable instead of being littered with magic numbers.
@@ -461,20 +581,35 @@ $singleSheetTag   = $null
 switch ($PSCmdlet.ParameterSetName) {
     'FromCsv' {
         # Pre-validate the header row before handing the file to Import-Csv.
-        # Import-Csv refuses duplicate column headers with the cryptic error
-        # "The member 'X' is already present", which fires before our own
-        # error handling runs. Detect the problem here so the user sees a
-        # message that names the duplicate and points at the file.
-        #
+        # Import-Csv refuses duplicate column headers with a cryptic error
+        # ("The member 'X' is already present") that has no file path and
+        # no column name. Get-CsvHeaderInfo:
+        #   - detects the encoding from the BOM (UTF-8, UTF-16 LE/BE)
+        #   - reads the first line using that encoding
+        #   - parses tokens with a CSV-aware tokeniser that respects the
+        #     supplied delimiter, quoted fields, and "" escaping
+        # so what we group-check below is exactly what Import-Csv would
+        # have seen.
+        $info = Get-CsvHeaderInfo -Path $CsvPath -Delimiter $Delimiter
+
+        # UTF-16 BOMs are Excel's "Unicode Text" save (Save As -> CSV (Comma
+        # Separated) does not produce UTF-16; "Unicode Text" does). That
+        # save defaults to TAB delimiters and the file usually has a .txt
+        # extension but sometimes users rename it to .csv. Comma-delimited
+        # parsing would see one giant column and silently report zero data
+        # rows. Tell the user explicitly instead.
+        if ($info.Encoding -like 'UTF-16*' -and -not $PSBoundParameters.ContainsKey('Delimiter')) {
+            throw "CSV is $($info.Encoding) - this is Excel's 'Unicode Text' format and uses tab delimiters. Either pass -Delimiter `"``t`" to read it as-is, or re-save from Excel as 'CSV UTF-8 (Comma delimited)'. File: $CsvPath"
+        }
+
+        if ($null -eq $info.HeaderLine) { throw "CSV is empty: $CsvPath" }
+
         # Two common shapes hit the duplicate check:
         #   * A real repeated header ('name,name,#role')
         #   * Trailing commas creating multiple empty-string headers
         #     ('title,#a,#b,,') - the user usually doesn't realise their
         #     CSV ends with stray columns
-        $headerLine = Get-Content -LiteralPath $CsvPath -TotalCount 1
-        if (-not $headerLine) { throw "CSV is empty: $CsvPath" }
-        $headers = $headerLine -split ',' | ForEach-Object { $_.Trim().Trim('"') }
-        $dupes = $headers | Group-Object | Where-Object Count -gt 1
+        $dupes = $info.Headers | Group-Object | Where-Object Count -gt 1
         if ($dupes) {
             $detail = foreach ($d in $dupes) {
                 if ($d.Name) { "'$($d.Name)' (x$($d.Count))" }
@@ -485,7 +620,7 @@ switch ($PSCmdlet.ParameterSetName) {
 
         $dataSheets = @( [pscustomobject]@{
             Name = [IO.Path]::GetFileNameWithoutExtension($CsvPath)
-            Rows = @(Import-Csv -LiteralPath $CsvPath)
+            Rows = @(Import-Csv -LiteralPath $CsvPath -Delimiter $Delimiter)
         } )
     }
 
